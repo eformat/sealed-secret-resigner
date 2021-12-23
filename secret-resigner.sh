@@ -5,6 +5,7 @@ set -e
 
 controller_namespace=
 project_list=
+ifs=','
 
 # rotate master key
 rotate_master() {
@@ -37,19 +38,25 @@ find_controller_ns() {
     controller_namespace=$(oc get pod -l app.kubernetes.io/name=sealed-secrets --all-namespaces -o custom-columns=NAME:.metadata.namespace --no-headers)
 }
 
+# find all namespaces with sealedsecrets
+find_secret_ns() {
+    project_list=$(echo -n $(oc get sealedsecrets --all-namespaces -o custom-columns=NAME:.metadata.namespace --no-headers | sort | uniq))
+    ifs=' '
+}
+
 usage() {
   cat <<EOF 2>&1
-usage: $0 [-c <sealed secret controller namespace>] -p <comma separated project list>
+usage: $0 [-c <sealed secret controller namespace> -p <comma separated project list>]
 
 rotate master key and update all sealed secrets in the project
     -c      sealed secret controller namesapce (optional - will find controller if no arg given)
-    -p      comma separated project list containing sealed secrets to resign
+    -p      comma separated project list containing sealed secrets to resign (optional - will find projects if no arg given)
     -h      help
 EOF
   exit 1
 }
 
-while getopts cp:uh c;
+while getopts c:p:uh c;
 do
     case $c in
         c)
@@ -76,19 +83,22 @@ fi
 if [ -z "${controller_namespace}" ]; then
     find_controller_ns
     if [ -z "${controller_namespace}" ]; then
-        echo "🔴 no sealed secret controller namespace specified (-c) ?"
+        echo "🔴 no sealed secret controller namespace found or specified (-c) ?"
         usage
     fi
 fi
 
 if [ -z "${project_list}" ]; then
-    echo "🔴 no project list specified (-p) ?"
-    usage
+    find_secret_ns
+    if [ -z "${project_list}" ]; then    
+        echo "🔴 no project list found or specified (-p) ?"
+        usage
+    fi
 fi
 
 rotate_master "${controller_namespace}"
 
-while IFS=',' read -ra pl; do
+while IFS=${ifs} read -ra pl; do
     for index in "${!pl[@]}"; do
         project=${pl[index]}
         read -r -a sealedsecrets <<< $(echo -n $(oc -n ${project} get sealedsecret --no-headers -o custom-columns=NAME:.metadata.name))
